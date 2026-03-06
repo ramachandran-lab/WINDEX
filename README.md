@@ -1,4 +1,9 @@
 # WINDEX: Scanning whole-genome aligned haplotype data for signatures of positive selective sweeps using an HHMM
+Authors: Hannah Snell, Scott McCallum, Dhruv Raghavan, Ritambhara Singh, Sohini Ramachandran, Lauren Sugden
+
+Preprint: 
+
+Will be formally packaged upon publication.  
 
 ## Getting started
 To use WINDEX, please set up the following environment based on the `requirements.txt` file in this repository: 
