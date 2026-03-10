@@ -16,7 +16,7 @@ This training should be run for your choice of site and window statistics separa
 read_me
 
 module load python # load python 3.13 into your env
-source ~/venv/windex_env/bin/activate # activate windex python env
+source ~/.venv/windex_env/bin/activate # activate windex python env
 
 swifr_path=~/example/emission_training/site_stats # path to site or window statistic dir (needs to follow SWIF(r) dir setup)
 
