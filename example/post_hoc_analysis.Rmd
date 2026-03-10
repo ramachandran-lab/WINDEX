@@ -1,0 +1,122 @@
+---
+title: "post_hoc_analysis"
+output: html_document
+date: "2026-03-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+custom_colors <- c('#91bfdb', '#ffffbf','#fc8d59', "#a8ddb5") 
+```
+
+# Post-hoc analyses for WINDEX output 
+
+The WINDEX output files themselves are hard to navigate, especially at the whole-genome level when they are rather large. Here are some example analyses that can be done with WINDEX output to make your research life easier! 
+
+## window-level analyses
+### bring in testing data 
+
+```{r}
+pattern_range <- "(8[1-9]|9[0-9]|100)\\.window_classified$"
+file_list <- list.files(pattern = pattern_range, full.names = T)
+
+window_results_list <- list()
+
+for (i in 1:length(file_list)) {
+  window_results_list[[file_list[i]]] <- read.csv(file_list[i], sep = '\t')
+}
+
+all_window_results <- bind_rows(window_results_list, .id = "source_file") %>% mutate(sim = str_extract(source_file, "[0-9]+"))
+```
+
+### generate confusion matrix at window-level 
+
+Based on 20 testing simulations with 25 windows per simulation, we expect to see 20 sweep windows, 40 linked windows, and 440 neutral windows. 
+
+```{r}
+# make "true label" column for confusion matrix 
+all_window_results_labels <- all_window_results %>% # first, make class variable so that WINDEX observations can be interpreted as classes
+  mutate(pred_name = ifelse(pred == 1, "neutral", 
+                 ifelse((pred == 2 | pred == 4), "linked", 
+                 "sweep"))) %>% 
+  mutate(label = ifelse(win == 480001, "sweep", # next, add in true labels based on training scheme (see Methods)
+                 ifelse((win == 440001 | win == 520001), "linked", 
+                 "neutral")))
+```
+
+```{r}
+# confusion matrix
+conf_matrix_table <- table(Actual = all_window_results_labels$label, Predicted = all_window_results_labels$pred_name)
+print(conf_matrix_table)
+```
+
+### plot window results over all testing simulations 
+
+```{r}
+# summarize the data
+all_window_results_plot <- all_window_results_labels %>% 
+  group_by(win, pred_name) %>% 
+  summarise(count = n())
+```
+
+```{r}
+# plot
+ggplot(all_window_results_plot, aes(x = win, y = (count/20), fill = factor(pred_name, levels = c("neutral", "linked", "sweep")))) + 
+  geom_col() + 
+  theme_light() + 
+  labs(x = "window", y = "proportion of simulations", fill = "WINDEX prediction") + 
+  scale_fill_manual(values = custom_colors) + 
+  theme(axis.text.x = element_text(angle=90)) 
+```
+
+## site-level analyses
+### bring in testing data 
+
+```{r}
+pattern_range <- "(8[1-9]|9[0-9]|100)\\.site_classified$"
+file_list <- list.files(pattern = pattern_range, full.names = T)
+
+site_results_list <- list()
+
+for (i in 1:length(file_list)) {
+  site_results_list[[file_list[i]]] <- read.csv(file_list[i], sep = '\t')
+}
+
+all_site_results <- bind_rows(site_results_list, .id = "source_file") %>% mutate(sim = str_extract(source_file, "[0-9]+"))
+```
+
+### analyze the number of sweep loci identified correctly in positively IDed sweep windows 
+
+Because of the WINDEX state structure, the only circumstance where a sweep site will be identified in the data is if it is located inside a sweep window. Therefore, when analyzing the "success" of WINDEX at the site-level, we look to the simulations where WINDEX has sweep classifications in our true sweep window only. 
+
+```{r}
+# get simulations where sweep window was correctly identified 
+sims_correct_sweep_window <- all_window_results %>% filter(pred == 3 & win == 480001) 
+
+# filter for these simulations only 
+all_site_results_filtered <- all_site_results %>% filter(sim %in% sims_correct_sweep_window$sim)
+```
+
+Next, let's add in our `pred_name` variable similar to the window-level case, but since we have a lot of sites to visualize even in our 40kb sweep window, let's only look at what is happening +/- 1kb from the true sweep site. We will do this by filtering for these sites by position. Since each simulation/genome file doesn't have the exact same sites or number of sites in them, we can bin sites into bins of 20 for visualization purposes. 
+
+```{r}
+bin_numbers <- seq(499000, 501000, 20) # set bins of 20 over the +/- 1kb region
+
+# make pred_name variable and get counts in each bin
+all_site_results_filtered_cleaned <- all_site_results_filtered %>% 
+  mutate(bins = cut(as.numeric(site), breaks = bin_numbers)) %>% 
+  mutate(pred_name = ifelse((site_pred == 1 | site_pred == 3), "linked", "sweep")) %>% 
+  mutate(label = ifelse(site == 500001, "sweep", "linked")) %>% 
+  group_by(bins, pred_name) %>% 
+  summarise(count = n())
+
+# get prediction counts over all bins
+pred_counts <- all_site_results_filtered %>% mutate(bins = cut(as.numeric(site), breaks = bin_numbers)) %>% group_by(bins) %>% summarise(pred_count = n())
+
+# merge site results and total prediction counts
+plot_data <- left_join(all_site_results_filtered_cleaned, pred_counts, by = c("bins")) %>% mutate(prop = count / pred_count) %>% filter(!is.na(bins))
+
+ggplot(plot_data, aes(x = bins, y = prop, fill = as.factor(pred_name))) + geom_col() + theme_minimal() + labs(x = "position", y = "proportion of class", fill = "class", title = "WINDEX site classifications in sweep simulations, +/- 1kb") + theme(axis.text.x = element_blank()) + scale_fill_manual(values = c('#ffffbf','#fc8d59'))
+```
+
