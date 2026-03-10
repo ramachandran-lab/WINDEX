@@ -16,7 +16,7 @@ If you choose to use SWIF(r) for WINDEX emission training, please follow the SWI
 read_me
 
 module load python
-source ~/venv/windex_env/bin/activate
+source ~/.venv/windex_env/bin/activate
 
 proj_dir=~/example/emission_training
 window_header=$'SNP_name\tPhysical_Distance\tMap_Distance\tTheta_Pi\tTheta_W\tTajima_D\tFay_Wu_H\tZeng_E\tGarud_H\tPBS\tNSS' # change these headers to match the statistics you are using
