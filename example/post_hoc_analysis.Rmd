@@ -18,6 +18,7 @@ The WINDEX output files themselves are hard to navigate, especially at the whole
 ### bring in testing data 
 
 ```{r}
+setwd("~/example/run_windex/output")
 pattern_range <- "(8[1-9]|9[0-9]|100)\\.window_classified$"
 file_list <- list.files(pattern = pattern_range, full.names = T)
 
