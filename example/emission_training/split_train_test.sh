@@ -2,10 +2,10 @@
 
 ### SLURM suggested params
 
-#SBATCH -J generate_train_test_data        
-#SBATCH -n 1    
-#SBATCH --time 1:00:00                    				    
-#SBATCH --mem 5G 
+# #SBATCH -J generate_train_test_data        
+# #SBATCH -n 1    
+# #SBATCH --time 1:00:00                    				    
+# #SBATCH --mem 5G 
 
 << read_me
 This script can be used to prepare your statistic files for input to training. 
