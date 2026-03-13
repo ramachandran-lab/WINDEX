@@ -10,7 +10,8 @@ To use WINDEX, please start by cloning this repository:
 git clone https://github.com/hmsnell/WINDEX.git
 ```
 
-Next, set up the following environment based on the `requirements.txt` file in this repository. WINDEX is compatible with Python versions >= 3.10: 
+Next, set up the following environment based on the `requirements.txt` file in this repository. 
+WINDEX is compatible with Python versions 3.10 through 3.12: 
 
 1. Make a new python environment called `windex_env`:  
   ```sh
