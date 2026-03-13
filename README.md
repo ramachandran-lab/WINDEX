@@ -4,7 +4,13 @@ _Authors:_ Hannah Snell, Scott McCallum, Dhruv Raghavan, Ritambhara Singh, Sohin
 **Will be formally packaged upon publication.** 
 
 ## Getting started
-To use WINDEX, please set up the following environment based on the `requirements.txt` file in this repository: 
+To use WINDEX, please start by cloning this repository: 
+
+```sh
+git clone https://github.com/hmsnell/WINDEX.git
+```
+
+Next, set up the following environment based on the `requirements.txt` file in this repository. WINDEX is compatible with Python versions >= 3.10: 
 
 1. Make a new python environment called `windex_env`:  
   ```sh
