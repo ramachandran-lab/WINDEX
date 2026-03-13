@@ -1,6 +1,6 @@
 """
 script that encodes WINDEX's hierarchical hmm framework
-references: hannah snell, dr. lauren sugden, scott mccallum
+references: dr. lauren sugden, scott mccallum
 """
 
 import numpy as np
@@ -8,6 +8,7 @@ from classifiers import Classifiers, Stats
 import math
 import sys
 import pandas as pd
+import argparse
 
 class WINDEX():
     
@@ -894,21 +895,26 @@ class WINDEX():
 		for s in range(1, len(state_path)): 
 			site_output.write('\t'.join([str(sites[s-1]), str(state_path[s]) + ("\n")]))
 
+	def main():
 
-if __name__ == '__main__':
+		parser = argparse.ArgumentParser(description= "Arguments for WINDEX")
 
-    path2trained_sites = sys.argv[1]
-    path2trained_windows = sys.argv[2]
-    sites_out = sys.argv[3]
-    windows_out = sys.argv[4]
-    datafile_sites = sys.argv[5]
-    datafile_windows = sys.argv[6]
-    # n_iter = int(sys.argv[7])
-    # mode = sys.argv[8]
-    # relaxed = sys.argv[9]
-    # emissiontype = sys.argv[10]
-    window_size = int(sys.argv[7])
+		parser.add_argument("path2trained_sites", help = "Path to directory that contains trained site-level emissions")
+		parser.add_argument("path2trained_windows", help = "Path to directory that contains trained window-level emissions")
+		parser.add_argument("sites_out", help = "Desired output file name for site output")
+		parser.add_argument("windows_out", help = "Desired output file name for window output")
+		parser.add_argument("datafile_sites", help = "Path to site-based statistics file for single genome/simulation")
+		parser.add_argument("datafile_sites", help = "Path to window-based statistics file for single genome/simulation")
+		parser.add_argument("window_size", help = "window size used to calculate window-based statistics")
 
-    W = WINDEX(path2trained_sites, path2trained_windows, datafile_sites, datafile_windows, window_size)
-    W.hierarchical_viterbi(windows_out, sites_out)
-    # W.many_hierarchical_backtraces(windows_out, sites_out, n_iter) for stochastic backtrace
+		args = parser.parse_args()
+
+		W = WINDEX(args.path2trained_sites, args.path2trained_windows, args.datafile_sites, args.datafile_windows, args.window_size)
+		W.hierarchical_viterbi(args.windows_out, args.sites_out)
+    	# W.many_hierarchical_backtraces(windows_out, sites_out, n_iter) for stochastic backtrace
+
+	if __name__ == '__main__':
+		main()
+	
+	
+	

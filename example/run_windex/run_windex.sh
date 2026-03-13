@@ -23,27 +23,20 @@ read_me
 module load python
 source ~/venv/windex_env/bin/activate
 
-### arguments in order ### 
-    # path to training dir for sites
-    # path to training dir for windows 
-    # output file name for sites
-    # output file name for windows
-    # path to site statisitc file for single simulation/genome
-    # path to window statistic file for single simulation/genome
-    # window size used to calculate window statistics
+# use hierarchical_hmm.py -h
 
 # run WINDEX
 
 for i in {81..100}; do # run WINDEX on all testing files (sims 1-80 were used for training!)
 
-    python hmm_scripts/hierarchical_hmm.py \
-        ~/example/emission_training/site_stats/ \
-        ~/example/emission_training/window_stats/ \
-        example_$i.site_classified \
-        example_$i.window_classified \
-        ~/example/emission_training/site_stats/stat_files/YRI.300.0.05.$i.stats \
-        ~/example/emission_training/window_stats/stat_files/YRI.300.0.05.$i.stats \
-        40000; 
+    python ~/scripts/hierarchical_hmm.py \
+        --path2trained_sites ~/example/emission_training/site_stats/ \
+        --path2trained_windows ~/example/emission_training/window_stats/ \
+        --sites_out example_$i.site_classified \
+        --windows_out example_$i.window_classified \
+        --datafile_sites ~/example/emission_training/site_stats/stat_files/YRI.300.0.05.$i.stats \
+        --datafile_windows ~/example/emission_training/window_stats/stat_files/YRI.300.0.05.$i.stats \
+        --window_size 40000; 
 
 done
         
