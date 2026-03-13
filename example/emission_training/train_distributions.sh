@@ -2,10 +2,10 @@
 
 ### SLURM suggested params
 
-#SBATCH -J retrain_distributions_w_swifr	        
-#SBATCH -n 4                        
-#SBATCH -t 1-0 					    
-#SBATCH --mem 50G 
+# #SBATCH -J retrain_distributions_w_swifr	        
+# #SBATCH -n 4                        
+# #SBATCH -t 1-0 					    
+# #SBATCH --mem 50G 
 
 << read_me
 This script can be used to train the emissions for WINDEX using its predecessor tool SWIF(r). 
