@@ -2,11 +2,11 @@
 
 ### SLURM suggested params
 
-#SBATCH -J run_windex 	   
-#SBATCH -N 1 						
-#SBATCH -n 1                        
-#SBATCH -t 2-00:00 			        	
-#SBATCH --mem 10G 				    
+# #SBATCH -J run_windex 	   
+# #SBATCH -N 1 						
+# #SBATCH -n 1                        
+# #SBATCH -t 2-00:00 			        	
+# #SBATCH --mem 10G 				    
 
 << read_me
 This script can be used to execute WINDEX after training the GMMs on your statistic files. 
