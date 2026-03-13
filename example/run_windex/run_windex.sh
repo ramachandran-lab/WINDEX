@@ -29,13 +29,13 @@ source ~/venv/windex_env/bin/activate
 
 for i in {81..100}; do # run WINDEX on all testing files (sims 1-80 were used for training!)
 
-    python ~/scripts/hierarchical_hmm.py \
-        --path2trained_sites ~/example/emission_training/site_stats/ \
-        --path2trained_windows ~/example/emission_training/window_stats/ \
-        --sites_out example_$i.site_classified \
-        --windows_out example_$i.window_classified \
-        --datafile_sites ~/example/emission_training/site_stats/stat_files/YRI.300.0.05.$i.stats \
-        --datafile_windows ~/example/emission_training/window_stats/stat_files/YRI.300.0.05.$i.stats \
+    python scripts/hierarchical_hmm.py \
+        --path2trained_sites example/emission_training/site_stats/ \
+        --path2trained_windows example/emission_training/window_stats/ \
+        --sites_out example/run_windex/output/example_$i.site_classified \
+        --windows_out example/run_windex/output/example_$i.window_classified \
+        --datafile_sites example/emission_training/site_stats/stat_files/YRI.300.0.05.$i.stats \
+        --datafile_windows example/emission_training/window_stats/stat_files/YRI.300.0.05.$i.stats \
         --window_size 40000; 
 
 done
