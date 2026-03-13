@@ -911,7 +911,7 @@ def main():
 	args = parser.parse_args()
 
 	print("Processing files " + str(args.datafile_sites + " and " + str(args.datafile_windows) + "..."))
-	W = WINDEX(args.path2trained_sites, args.path2trained_windows, args.datafile_sites, args.datafile_windows, args.window_size)
+	W = WINDEX(args.path2trained_sites, args.path2trained_windows, args.datafile_sites, args.datafile_windows, int(args.window_size))
 	W.hierarchical_viterbi(args.windows_out, args.sites_out)
 	# W.many_hierarchical_backtraces(windows_out, sites_out, n_iter) for stochastic backtrace
 
