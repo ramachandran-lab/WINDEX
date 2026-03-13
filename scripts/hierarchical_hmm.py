@@ -899,13 +899,13 @@ class WINDEX():
 
 		parser = argparse.ArgumentParser(description= "Arguments for WINDEX")
 
-		parser.add_argument("path2trained_sites", help = "Path to directory that contains trained site-level emissions")
-		parser.add_argument("path2trained_windows", help = "Path to directory that contains trained window-level emissions")
-		parser.add_argument("sites_out", help = "Desired output file name for site output")
-		parser.add_argument("windows_out", help = "Desired output file name for window output")
-		parser.add_argument("datafile_sites", help = "Path to site-based statistics file for single genome/simulation")
-		parser.add_argument("datafile_sites", help = "Path to window-based statistics file for single genome/simulation")
-		parser.add_argument("window_size", help = "window size used to calculate window-based statistics")
+		parser.add_argument('--path2trained_sites', help = "Path to directory that contains trained site-level emissions")
+		parser.add_argument('--path2trained_windows', help = "Path to directory that contains trained window-level emissions")
+		parser.add_argument('--sites_out', help = "Desired output file name for site output")
+		parser.add_argument('--windows_out', help = "Desired output file name for window output")
+		parser.add_argument('--datafile_sites', help = "Path to site-based statistics file for single genome/simulation")
+		parser.add_argument('--datafile_windows', help = "Path to window-based statistics file for single genome/simulation")
+		parser.add_argument('--window_size', help = "window size used to calculate window-based statistics")
 
 		args = parser.parse_args()
 
