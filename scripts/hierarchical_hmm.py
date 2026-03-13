@@ -28,7 +28,7 @@ class WINDEX():
 
 	def read_site_statfiles(self):
 		# open site info
-		print("Reading site file...\n")
+		print("Reading site file...")
 		classifierobj_sites = Classifiers(self.path2trained_sites)
 		file_sites = open(self.path2trained_sites + 'component_stats.txt')
 		stats_sites = file_sites.read()
@@ -70,7 +70,7 @@ class WINDEX():
 	
 	def read_window_statfiles(self):
 		# open window info
-		print("Reading window file...\n")
+		print("Reading window file...")
 		classifierobj_windows = Classifiers(self.path2trained_windows)
 		file_windows = open(self.path2trained_windows + 'component_stats.txt')
 		stats_windows = file_windows.read()
@@ -327,7 +327,7 @@ class WINDEX():
 		empty_windows = []
 
 		# recursion over all windows
-		print("Performing hierarchical Viterbi algorithm...\n")
+		print("Performing hierarchical Viterbi algorithm...")
 		for t in range(1, n_window_intervals + 1):
 			win_start = self.windows[t-1]
 			win_end = self.windows[t-1] + self.window_size - 1
@@ -460,7 +460,7 @@ class WINDEX():
 					counter += 1
 
 		# print output file
-		print("Writing site and window path files...\n")
+		print("Writing site and window path files...")
 		site_results = []
 		window_results = []
 		window_list = []
@@ -910,6 +910,7 @@ def main():
 
 	args = parser.parse_args()
 
+	print("Processing files " + str(args.datafile_sites + " and " + str(args.datafile_windows) + "..."))
 	W = WINDEX(args.path2trained_sites, args.path2trained_windows, args.datafile_sites, args.datafile_windows, args.window_size)
 	W.hierarchical_viterbi(args.windows_out, args.sites_out)
 	# W.many_hierarchical_backtraces(windows_out, sites_out, n_iter) for stochastic backtrace
