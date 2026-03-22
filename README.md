@@ -3,6 +3,8 @@ _Authors:_ Hannah Snell, Scott McCallum, Dhruv Raghavan, Ritambhara Singh, Sohin
 
 **Will be formally packaged upon publication.** 
 
+Processed VCFs are being uploaded to a Zenodo repository. Will update shortly. 
+
 ## Getting started
 To use WINDEX, please start by cloning this repository: 
 
