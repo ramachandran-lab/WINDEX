@@ -1,0 +1,222 @@
+// model based on Gutenkunst et al. 2009
+// sweep mutation introduced 300 gens before present, 0.05 sel coeff
+
+initialize() {
+	// define input constants from command line
+	if (exists("slimgui")) {
+ 		defineConstant("selCoeff", 0.05);
+ 		defineConstant("N_YRI", 1200); // 10% of final population size
+ 		defineConstant("N_CEU", 1200); // 10% of final population size
+ 		defineConstant("N_CHB", 1200); // 10% of final population size
+ 		defineConstant("seed", 111111);
+		defineConstant("gens", 300);
+ 		defineConstant("pop", "YRI");
+ 		defineConstant("run_name", 12345); 
+		defineConstant("threshold", 0.3);
+ 	}
+ 	
+ 	defineConstant("direc", "/working_dir/");
+ 	
+ 	//setSeed(seed); 
+	initializeMutationRate(2.35e-8);
+	initializeMutationType("m1", 0.5, "f", 0.0);
+	initializeMutationType("m2", 0.5, "f", selCoeff);  // introduced mutation
+	
+	m2.mutationStackPolicy = "f"; 	
+	m2.color = "cyan";
+	m2.convertToSubstitution = F; 
+	
+	initializeGenomicElementType("g1", m1, 1.0);
+	initializeGenomicElement(g1, 0, 999999); 
+	initializeRecombinationRate(2.11e-8); // from stdpopsim
+	
+}
+	
+/////////////// START DEMOGRAPHIC MODEL STRUCTURE /////////////// 	
+	
+// Initialize the ancestral African population 
+
+1 early() { 
+	defineConstant("simID", getSeed());
+	sim.addSubpop("p1", 7300); 
+}
+
+// End burn-in period of 10*N=73000 generations (specific to SLiM recipe) then expand the African population
+// This occurs (8800 generations)*(25 years)=220000 yrs ago
+// Thus, simulation should end at generation 1+73000+5600=81801
+
+73000 early() { p1.setSubpopulationSize(asInteger(12300)); } 
+
+// Split Eurasians (p2) from Africans (p1) and set up migration between them
+// This occurs 5600 generations ago
+// Relative to beginning, this is generation 81801-5600=76201
+
+76201 early() {
+	sim.addSubpopSplit("p2", asInteger(2100), p1); // starting size of CEU
+	p1.setMigrationRates(c(p2), c(25e-5)); 
+	p2.setMigrationRates(c(p1), c(25e-5)); 
+}
+
+// Split p2 into European (p2) and East Asian (p3) subpopulations; Resize; Set up migration between them
+// This occurs 939.8072428 generations (23495.18107 years) ago; paper rounds to 920 gens (23000 yr)
+// Relative to beginning, this is generation 81801-848=80953
+
+80953 early() {
+	sim.addSubpopSplit("p3", asInteger(510), p2); 
+	p2.setSubpopulationSize(asInteger(1000));  // reduce European size
+
+	// Set migration rates for the rest of the simulation
+	p1.setMigrationRates(c(p2, p3), c(3.0e-5, 1.9e-5)); 
+	p2.setMigrationRates(c(p1, p3), c(3.0e-5, 9.6e-5)); 
+	p3.setMigrationRates(c(p1, p2), c(1.9e-5, 9.6e-5)); 
+}
+
+// Set up exponential growth in Europe (p2) and East Asia (p3)
+// Where N(0) is the base subpopulation size and t = gen - 81801:
+//    N(Europe) should be int(round(N(0) * (1 + 0.004)^t)), i.e., growth is r=0.38% per generation
+//    N(East Asia) should be int(round(N(0) * (1 + 0.0055)^t)), i.e., growth is r=0.48% per generation
+
+80953:81801 early() {
+	t = sim.cycle - 80953;
+	p2_size = round(1000 * (1 + 0.004)^t); 
+	p3_size = round(510 * (1 + 0.0055)^t); 
+	
+	p2.setSubpopulationSize(asInteger(p2_size));
+	p3.setSubpopulationSize(asInteger(p3_size));
+}
+
+81501 late() { // 300 gens before present; set only one of these at a time to given selection coefficient, the rest to zero (just throws a neutral mutation in place)
+
+	// save sim state
+	sim.outputFull(tempdir() + "slim_" + simID + ".txt");
+
+	// introduce the beneficial mutation in population
+	if (pop == "YRI") {
+		target = sample(p1.genomes, N_YRI);
+		target.addNewDrawnMutation(m2, 500000); 
+		p1.genomes.mutationsOfType(m2).setSelectionCoeff(selCoeff);
+		//p2.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+		//p3.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+	} 
+	else if (pop == "CEU") { 
+		target = sample(p2.genomes, N_CEU);
+		target.addNewDrawnMutation(m2, 500000);
+		//p1.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+		p2.genomes.mutationsOfType(m2).setSelectionCoeff(selCoeff);
+		//p3.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+	}
+	else {
+		target = sample(p3.genomes, N_CHB); 
+		target.addNewDrawnMutation(m2, 500000);
+		//p1.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+		//p2.genomes.mutationsOfType(m2).setSelectionCoeff(selCoeff);
+		p3.genomes.mutationsOfType(m2).setSelectionCoeff(selCoeff);
+	}
+	
+} 
+
+81801 late() { // restart sim if mutation of interest is not identified due to low AF
+
+	if (selCoeff > 0) {
+		if (pop == "YRI") {  
+			freq = sim.mutationFrequencies(p1, sim.mutationsOfType(m2));
+		}
+		else if (pop == "CEU") {
+			freq = sim.mutationFrequencies(p2, sim.mutationsOfType(m2));;
+		}
+		else { 
+			freq = sim.mutationFrequencies(p3, sim.mutationsOfType(m2));;
+		}
+	} 
+	
+	//print(size(mut));
+	if (size(freq) > 0)
+	{
+		if (freq > threshold) // set according to arbitrary threshold in target population only - current value across all sims is 0.1 
+		{
+			cat(simID + ": ESTABLISHED\n");
+			community.deregisterScriptBlock(self);
+
+			// OUTPUT AND TERMINATE
+			// Generation 81801 is the present, i.e., 1 initialize + 73104 burn-in + 5919 evolution
+
+			x = getSeed();
+			print("true sim seed: " + x);
+			print("YRI AF: " + sim.mutationFrequencies(p1, sim.mutationsOfType(m2)));
+			print("CEU AF: " + sim.mutationFrequencies(p2, sim.mutationsOfType(m2)));
+			print("CHB AF: " + sim.mutationFrequencies(p3, sim.mutationsOfType(m2)));
+			d = p1.sampleIndividuals(100).genomes; 
+			e = p2.sampleIndividuals(100).genomes;
+			f = p3.sampleIndividuals(100).genomes;
+			vec = c(d,e,f);
+			vec.outputVCF(filePath = direc + pop + "." + gens + "." + selCoeff + "." + run_name + ".vcf" );
+		} else {cat(simID + ": LOST - RESTARTING\n");
+		
+		// go back to tick where beneficial muts are introduced
+		sim.readFromPopulationFile(tempdir() + "slim_" + simID + ".txt");
+		
+		// start a newly seeded run
+		setSeed(rdunif(1, 0, asInteger(2^62) - 1));
+		
+		// re-introduce the sweep mutation
+
+		if (pop == "YRI") {
+			target = sample(p1.genomes, N_YRI);
+			target.addNewDrawnMutation(m2, 500000); 
+			p1.genomes.mutationsOfType(m2).setSelectionCoeff(selCoeff);
+			//p2.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+			//p3.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+		} 
+		else if (pop == "CEU") { 
+			target = sample(p2.genomes, N_CEU);
+			target.addNewDrawnMutation(m2, 500000);
+			//p1.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+			p2.genomes.mutationsOfType(m2).setSelectionCoeff(selCoeff);
+			//p3.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+		}
+		else { // reintroduce mutation in pop2 since mutation occurs before pop split
+			target = sample(p3.genomes, N_CHB); 
+			target.addNewDrawnMutation(m2, 500000);
+			//p1.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+			//p2.genomes.mutationsOfType(m2).setSelectionCoeff(selCoeff);
+			p3.genomes.mutationsOfType(m2).setSelectionCoeff(selCoeff);
+		}} 
+	}
+	else {
+		cat(simID + ": LOST - RESTARTING\n");
+		
+		// go back to tick where beneficial muts are introduced
+		sim.readFromPopulationFile(tempdir() + "slim_" + simID + ".txt");
+		
+		// start a newly seeded run
+		setSeed(rdunif(1, 0, asInteger(2^62) - 1));
+		
+		// re-introduce the sweep mutation
+
+		if (pop == "YRI") {
+			target = sample(p1.genomes, N_YRI);
+			target.addNewDrawnMutation(m2, 500000); 
+			p1.genomes.mutationsOfType(m2).setSelectionCoeff(selCoeff);
+			//p2.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+			//p3.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+		} 
+		else if (pop == "CEU") { 
+			target = sample(p2.genomes, N_CEU);
+			target.addNewDrawnMutation(m2, 500000);
+			//p1.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+			p2.genomes.mutationsOfType(m2).setSelectionCoeff(selCoeff);
+			//p3.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+		}
+		else {
+			target = sample(p3.genomes, N_CHB); 
+			target.addNewDrawnMutation(m2, 500000);
+			//p1.genomes.mutationsOfType(m2).setSelectionCoeff(0.0);
+			//p2.genomes.mutationsOfType(m2).setSelectionCoeff(selCoeff);
+			p3.genomes.mutationsOfType(m2).setSelectionCoeff(selCoeff);
+		}
+
+	}
+}
+
+
+
