@@ -1,0 +1,11 @@
+stat1	stat1	neutral	sweep	linked
+XP-EHH	DDAF	1	1	1
+XP-EHH	iHS	1	1	1
+XP-EHH	nSL	1	1	1
+XP-EHH	FST	1	1	1
+DDAF	iHS	1	1	1
+DDAF	nSL	1	1	1
+DDAF	FST	1	1	1
+iHS	nSL	1	1	1
+iHS	FST	1	1	1
+nSL	FST	1	1	1

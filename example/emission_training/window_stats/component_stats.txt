@@ -1,0 +1,8 @@
+Theta_Pi
+Theta_W
+Tajima_D
+Fay_Wu_H
+Zeng_E
+Garud_H
+PBS
+NSS
