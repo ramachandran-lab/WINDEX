@@ -87,7 +87,3 @@ Once training (and retraining) are complete at both the site- and window-levels,
 WINDEX is easy to run using the `run_windex.sh` script found in `~/examples/run_windex` folder. The required inputs should already be configured for this example. You will know that you ran this correctly when the `output/` directory contains files with the extensions `.site_classified` and `.window_classified`. 
 
 Now that you've run WINDEX, you can explore the post-hoc analyses we used in our paper by loading the output files in the the `post_hoc_analysis.Rmd` file. 
-
-## WINDEX Transition Probabilities 
-
-## Whole-genome scans in data from the 1000 Genomes Project
