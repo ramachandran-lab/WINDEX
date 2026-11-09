@@ -2,10 +2,13 @@
 script to define classifier models for WINDEX emissions 
 references: hannah snell, dr. lauren sugden, scott mccallum
 """
+
 import numpy as np
 import math
 import os
 import pickle
+
+SQRT_2PI = math.sqrt(2 * math.pi)
 
 class Stats():
     def __init__(self,path):
@@ -22,7 +25,7 @@ class Stats():
         return self.stat2score
 
 class Classifiers():
-    def __init__(self,path2trained, odecompensation=True):
+    def __init__(self,path2trained, odecompensation = True):
 
         self.classes = ['neutral','sweep', 'linked']
         file = open(path2trained+'component_stats.txt','r')
@@ -36,7 +39,7 @@ class Classifiers():
         for stat in self.statlist:
             statnum = self.stat2num[stat]
             for C in self.classes:
-                self.MARGINALS[statnum].append(self.gmm_fit_1D(stat,C))
+                self.MARGINALS[statnum].append(self._extract_marginal_params(self.gmm_fit_1D(stat,C)))
         self.odecompensation = odecompensation
 
         self.JOINTS = [[[] for _ in self.stat2num.keys()] for _ in self.stat2num.keys()]
@@ -47,7 +50,7 @@ class Classifiers():
                 statnum2 = self.stat2num[stat2]
                 if statnum1 < statnum2:
                     for C in self.classes:
-                        self.JOINTS[statnum1][statnum2].append(self.gmm_fit(stat1,stat2,C))
+                        self.JOINTS[statnum1][statnum2].append(self._extract_joint_params(self.gmm_fit(stat1,stat2,C)))
 
     def classify(self,pivec):
         numerators = []
@@ -71,6 +74,7 @@ class Classifiers():
                 value = self.GMM_pdf(M,score)
                 product = product*value
                 vallist.append(value)
+
         if len(vallist) == 0: 
             #print("Error: one or more input rows have no defined statistics. Please remove from your data or recalculate.")
             return None
@@ -82,46 +86,71 @@ class Classifiers():
                 product = product*xbar
         return product
 
-    def ode_likelihood(self,C, S): # adapted from ode function in SWIFr.py to only return likelihood for a single classification scenario
+    def _extract_marginal_params(self, G): # one-time conversion of fitted 1D GMM into plain floats (call once)
+        params = []
+        for i in range(len(G.weights_)): 
+            w = float(G.weights_[i])
+            mu = float(G.means_[i].item())
+            sigma = math.sqrt(float(G.covariances_[i].item()))
+            params.append((w, mu, sigma))
+        return params
+
+    def _extract_joint_params(self, G): # one-time conversion of fitted 1D GMM into plain floats (call once)
+        params = []
+        for i in range(len(G.weights_)): 
+            w = float(G.weights_[i])
+            mu1 = float(G.means_[i][0])
+            mu2 = float(G.means_[i][1])
+            sigma1 = math.sqrt(float(G.covariances_[i][0][0]))
+            sigma2 = math.sqrt(float(G.covariances_[i][1][1]))
+            ro = float(G.covariances_[i][0][1]) / (sigma1 * sigma2)
+            cond_sigma_1given2 = sigma1 * math.sqrt(1 - ro**2)
+            cond_sigma_2given1 = sigma2 * math.sqrt(1 - ro**2)
+            params.append((w, mu1, mu2, sigma1, sigma2, ro, cond_sigma_1given2, cond_sigma_2given1))
+        return params
+
+    def aode_likelihood(self, C, S): # from ode function in SWIFr.py; return aode likelihood for a single classification scenario
         ode_likelihoods = []
+        scenarionum = self.classes.index(C)
         for keystat in self.statlist:
             score = S.stat2score[keystat]
-            if np.isnan(score):
-                return 'n/a'
-            else:
+            if score != -998: # changed to check if stat value is -998 
                 Likelihood_list = []
                 MARGS = self.MARGINALS[self.stat2num[keystat]]
-                scenarionum = self.classes.index(C)
                 M = MARGS[self.classes.index(C)]
-                value = self.GMM_pdf(M,score)
-                Likelihood = value
-                Likelihood_list.append(value)
+                value = self.GMM_pdf(M, score)
+                Likelihood = value # marginal likelihood for keystat
                 stats_undefined = 0 # keep track of how many comparison stats are undefined
                 for stat in self.statlist:
                     if stat != keystat:
                         score2 = S.stat2score[stat]
-                        if np.isnan(score2):
+                        if score2 == -998:
                             stats_undefined += 1
                         else:
                             if self.stat2num[keystat] < self.stat2num[stat]:
-                                H = self.conditional_GMM(score,2,self.JOINTS[self.stat2num[keystat]][self.stat2num[stat]][scenarionum])
-                                value = self.GMM_pdf(H,score2)
-                                Likelihood = Likelihood*value
+                                H = self.conditional_GMM(score, 2, self.JOINTS[self.stat2num[keystat]][self.stat2num[stat]][scenarionum])
+                                value = self.GMM_pdf(H, score2)
+                                Likelihood = Likelihood * value
                                 Likelihood_list.append(value)
                             else:
-                                H = self.conditional_GMM(score,1,self.JOINTS[self.stat2num[stat]][self.stat2num[keystat]][scenarionum])
-                                value = self.GMM_pdf(H,score2)
-                                Likelihood = Likelihood*value
+                                H = self.conditional_GMM(score, 1, self.JOINTS[self.stat2num[stat]][self.stat2num[keystat]][scenarionum])
+                                value = self.GMM_pdf(H, score2)
+                                Likelihood = Likelihood * value
                                 Likelihood_list.append(value)
-                if self.odecompensation:
+                
+                if self.odecompensation: # do this 
                     n = stats_undefined
-                    xbar = float(sum(Likelihood_list))/len(Likelihood_list) # average conditional density for defined comparison stats
-                    for i in range(n):
-                        Likelihood = Likelihood*xbar
-    
-            ode_likelihoods.append(Likelihood)
+                    if len(Likelihood_list) > 0: # else: no other stats were defined so Likelihood is single-stat marginal
+                        xbar = float(sum(Likelihood_list))/len(Likelihood_list) # average conditional density for defined comparison stats
+                        for i in range(n):
+                            Likelihood = Likelihood * xbar
+
+                ode_likelihoods.append(Likelihood)
+
+        if len(ode_likelihoods) == 0: # check to make sure ode_likelihoods is non-empty
+            return None
         
-        # return average of ode likelihoods for aode emission
+        # return average of ode likelihoods for aode emission of specific class
         return sum(ode_likelihoods) / len(ode_likelihoods)
 
     def gmm_fit_1D(self,stat,scenario):
@@ -132,13 +161,11 @@ class Classifiers():
         G = pickle.load(open(self.path2AODE+stat1+'_'+stat2+'_'+scenario+'_GMMparams.p','rb'))
         return G
 
-    def GMM_pdf(self,G,x):
-        w = G.weights_
-        mu = G.means_
-        C = G.covariances_
-        pdf = 0
-        for i in range(len(w)):
-            pdf += w[i]*self.normpdf(x,mu[i][0],math.sqrt(C[i][0]))
+    def GMM_pdf(self, params, x):
+        pdf = 0.0
+        for w, mu, sigma in params: 
+            u = (x - mu) / sigma 
+            pdf += w * math.exp(-u * u/2) / (SQRT_2PI * sigma)
         return pdf
 
     def normpdf(self,x,mu,sigma):
@@ -146,27 +173,18 @@ class Classifiers():
         y = (1/(math.sqrt(2*math.pi)*abs(sigma)))*math.exp(-u*u/2)
         return y
 	    
-    def conditional_GMM(self,condval,keystat,G):
-        # keystat = 1 if want stat1|stat2, keystat = 2 if want stat2|stat1
-        H = Mix1D()
-
-        for i in range(len(G.weights_)):
-            sigma1 = math.sqrt(G.covariances_[i][0][0])
-            sigma2 = math.sqrt(G.covariances_[i][1][1])
-            ro = float(G.covariances_[i][0][1])/(sigma1*sigma2)
-            mu1 = G.means_[i][0]
-            mu2 = G.means_[i][1]
-            if keystat == 1:
-                H.weights_.append(G.weights_[i])
-                H.means_.append([mu1 + float(sigma1*ro*(condval-mu2))/sigma2])
-                H.covariances_.append([(1-ro**2)*sigma1**2])
-
-            elif keystat == 2:
-                H.weights_.append(G.weights_[i])
-                H.means_.append([mu2 + float(sigma2*ro*(condval-mu1))/sigma1])
-                H.covariances_.append([(1-ro**2)*sigma2**2])
+    def conditional_GMM(self, condval, keystat, joint_params):
+        H = [] 
+        if  keystat == 1: 
+            for w, mu1, mu2, sigma1, sigma2, ro, cs1g2, _ in joint_params: 
+                cond_mu = mu1 + sigma1 * ro * (condval - mu2) / sigma2
+                H.append((w, cond_mu, cs1g2))
+        else: 
+            for w, mu1, mu2, sigma1, sigma2, ro, _, cs2g1 in joint_params: 
+                cond_mu = mu2 + sigma2 * ro * (condval - mu1) / sigma1
+                H.append((w, cond_mu, cs2g1))
         return H
-
+        
 class Mix1D():
     def __init__(self):
         self.means_ = []

@@ -8,9 +8,9 @@
 # #SBATCH --mem 5G 
 
 << read_me
-This script can be used to prepare your statistic files for input to training. 
+This script can be used as a template to prepare your statistic files for input to training. 
 This script splits the statistic files at an 80/20 ratio for training and testing, respectively. 
-As an example, normalized statistics generated from 3POOA simulations in SLiM for YRI are used (80 training, 20 testing). 
+As an example, we provided standardized statistics generated from 3POOA simulations in SLiM for YRI (80 training, 20 testing). These are from an outdated simulation scheme and are not to be used beyond proof-of-concept runnining this tool.
 It is not required to use SWIF(r) to generate the trained emissions, but WINDEX integrates with the SWIF(r) output to make it easier for users, so it is recommended. 
 If you choose to use SWIF(r) for WINDEX emission training, please follow the SWIF(r) directory and file format available here: https://github.com/ramachandran-lab/SWIFr
 read_me

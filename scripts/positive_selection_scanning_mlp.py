@@ -1,20 +1,38 @@
 """
 script to run MLP for positive selection scanning classification
 references: dhruv raghavan, hannah snell
+
+For pooled exports: python positive_selection_scanning_mlp.py DATA --output RESULTS --sampling both
 """
 
 import pandas as pd
-import re
+import argparse
+from pathlib import Path
 import numpy as np
 import glob
 import os
-from tqdm import tqdm
+import tensorflow as tf
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.regularizers import l2
-from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.layers import Input, Dense, Dropout, BatchNormalization
 from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix, classification_report
+
+CLASSES = ("linked", "neutral", "sweep")  # Alphabetical, as in LabelEncoder.
+SITE_FEATURES = ["FST", "DDAF", "iHS", "nSL", "XP-EHH"]
+WINDOW_FEATURES = [
+    "Theta_Pi", "Theta_W", "Tajima_D", "Garud_H", "Fay_Wu_H", "Zeng_E", "PBS", "NSS",
+]
+FEATURES = SITE_FEATURES + WINDOW_FEATURES
+WINDOW_ALIASES = {
+    "Tajimas_D": "Tajima_D",
+    "Garuds_H": "Garud_H",
+    "Fay_Wus_H": "Fay_Wu_H",
+    "Zengs_E": "Zeng_E",
+}
+WINDOW_SIZE = 40_000
+
 
 def parse_filename(filename):
     """Extract population, generations, selection coefficient, and simulation number from filename"""
@@ -50,6 +68,8 @@ def parse_filename(filename):
     return None, None, None, None
 
 def load_data(base_path="data/deep_learning_sims_20251003", data_split="training_data"):
+
+    from tqdm import tqdm
 
     data_path = os.path.join(base_path, data_split)
     
@@ -229,10 +249,92 @@ def process_simulation_pair_with_labeling(site_df, window_df, site_features, win
                   ['label', 'population', 'generations', 'selcoeff', 'simulation'])
         return pd.DataFrame(columns=columns)
 
-def balance_training_data_downsample(data):
+def read_export(root, level, label, split):
+    path = root / level / f"{level}_{label}.{split}"
+    table = pd.read_csv(path, sep=r"\s+", na_values=[-998], keep_default_na=True)
+    columns = SITE_FEATURES if level == "site" else WINDOW_FEATURES
+    table = table.rename(columns={"SNP_name": "position", **WINDOW_ALIASES})
+    table = table[["position", *columns]]
+    if table.empty or table["position"].isna().any():
+        raise ValueError(f"Missing coordinates in {path}")
+    positions = table["position"].to_numpy()
+    if label == "sweep":
+        expected = 500_001 if level == "site" else 480_001
+        if not np.all(positions == expected):
+            raise ValueError(f"Expected one sweep coordinate per block in {path}")
+        table["block"] = np.arange(1, len(table) + 1)
+    else:
+        # Equal adjacent positions can occur within the same simulation.
+        table["block"] = table["position"].diff().lt(0).cumsum() + 1
+    table["label"] = label
+    return table
+
+
+def load_export_data(root, split):
+    site = {label: read_export(root, "site", label, split) for label in CLASSES}
+    window = {label: read_export(root, "window", label, split) for label in CLASSES}
+    n_blocks = len(site["sweep"])
+    for table in [*site.values(), *window.values()]:
+        if table["block"].iat[-1] != n_blocks:
+            raise ValueError(f"Inconsistent simulation block counts in {split}")
+
+    sites = pd.concat(site.values(), ignore_index=True)
+    windows = pd.concat(window.values(), ignore_index=True).rename(
+        columns={"position": "window_start", "label": "window_label"}
+    )
+    sites["window_start"] = (sites["position"] - 1) // WINDOW_SIZE * WINDOW_SIZE + 1
+    paired = sites.merge(
+        windows, on=["block", "window_start"], how="left", validate="many_to_one",
+        indicator=True, sort=False,
+    )
+    if not paired["_merge"].eq("both").all():
+        raise ValueError(f"Some {split} sites have no corresponding window")
+    linked_in_sweep = paired["label"].eq("linked") & paired["window_label"].eq("sweep")
+    if not (paired["label"].eq(paired["window_label"]) | linked_in_sweep).all():
+        raise ValueError(f"Site and window classes disagree in {split}")
+
+    # Check inferred block order against the number of segregating sites (NSS).
+    keys = ["block", "window_start"]
+    observed = sites.groupby(keys).size().rename("site_count")
+    audit = windows.join(observed, on=keys)
+    audit["site_count"] = audit["site_count"].fillna(0)
+    concordance = audit.groupby("window_start")[["NSS", "site_count"]].apply(
+        lambda group: group["NSS"].corr(group["site_count"])
+    )
+    if not concordance.ge(0.5).all():
+        raise ValueError(f"Could not verify site/window block alignment in {split}")
+
+    usable = np.isfinite(paired[FEATURES]).all(axis=1)
+    clean = paired.loc[usable, ["block", "position", "window_start", "label", *FEATURES]]
+    counts = pd.DataFrame({
+        "raw": paired["label"].value_counts(),
+        "complete": clean["label"].value_counts(),
+    }).fillna(0).astype(int)
+    print(f"{split}: {n_blocks} blocks, minimum NSS / site-count r={concordance.min():.3f}")
+    print(counts.to_string(), flush=True)
+    return clean, n_blocks
+
+
+def load_scenarios(path, n_blocks):
+    if path is None:
+        return None
+    mapping = pd.read_csv(path, dtype={"scenario": "string"})
+    if (mapping["block"].duplicated().any()
+            or set(mapping["block"]) != set(range(1, n_blocks + 1))
+            or mapping["scenario"].fillna("").str.strip().eq("").any()):
+        raise ValueError("Supply one nonempty scenario per 1-based test block")
+    return mapping.set_index("block")["scenario"].str.strip()
+
+
+def balance_training_data_downsample(data, *, seed=None):
     """
     Balance training data using random downsampling to match the smallest class
     """
+    if seed is not None:
+        groups = data.groupby('label', sort=True)
+        min_class_size = groups.size().min()
+        return groups.sample(n=min_class_size, random_state=seed).sample(frac=1, random_state=seed)
+
     # Get class counts
     class_counts = data['label'].value_counts()
     print(f"Original class distribution:")
@@ -244,9 +346,7 @@ def balance_training_data_downsample(data):
     print(f"Will downsample all classes to {min_class_size} samples")
     
     # Extract features for balancing
-    feature_columns = ['FST', 'DDAF', 'iHS', 'nSL', 'XP-EHH',
-                      'Theta_Pi', 'Theta_W', 'Tajima_D', 'Garud_H', 
-                      'Fay_Wu_H', 'Zeng_E', 'PBS', 'NSS']
+    feature_columns = FEATURES
     
     # Clean data - remove rows with missing values
     data_clean = data.dropna(subset=feature_columns)
@@ -281,18 +381,18 @@ def balance_training_data_downsample(data):
     
     return balanced_data
 
-def train_model(train_data, model_name="dl_model"):
+def train_model(train_data, model_name="dl_model", *, validation_data=None):
     """Train the deep learning model"""
     # Extract features and labels
-    feature_columns = ['FST', 'DDAF', 'iHS', 'nSL', 'XP-EHH',
-                      'Theta_Pi', 'Theta_W', 'Tajima_D', 'Garud_H', 
-                      'Fay_Wu_H', 'Zeng_E', 'PBS', 'NSS']
+    feature_columns = FEATURES
     
     # Handle missing values
     train_data_clean = train_data.dropna(subset=feature_columns)
     print(f"Training data shape after removing NaN: {train_data_clean.shape}")
     
-    X_train = train_data_clean[feature_columns].values
+    X_train = train_data_clean[feature_columns]
+    if validation_data is None:
+        X_train = X_train.values
     
     # Encode labels
     label_encoder = LabelEncoder()
@@ -305,10 +405,24 @@ def train_model(train_data, model_name="dl_model"):
     
     # Scale features
     scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
+    if validation_data is None:
+        X_train_scaled = scaler.fit_transform(X_train)
+        validation_options = {'validation_split': 0.2}
+        steps_per_execution = 1
+        verbose = 1
+    else:
+        scaler.fit(X_train)
+        X_train_scaled = scaler.transform(X_train).astype(np.float32)
+        y_train = y_train.astype(np.int32)
+        X_val_scaled = scaler.transform(validation_data[feature_columns]).astype(np.float32)
+        y_val = label_encoder.transform(validation_data['label']).astype(np.int32)
+        validation_options = {'validation_data': (X_val_scaled, y_val)}
+        steps_per_execution = 128
+        verbose = 2
     
     # Build model with regularization
     model = Sequential([
+        Input(shape=(X_train_scaled.shape[1],)),
         Dense(64, activation='relu', kernel_regularizer=l2(0.01)),
         BatchNormalization(),
         Dropout(0.5),
@@ -320,12 +434,11 @@ def train_model(train_data, model_name="dl_model"):
         Dense(len(label_encoder.classes_), activation='softmax')
     ])
 
-    model.build(input_shape=(None, X_train_scaled.shape[1]))
-    
     # Compile model
     model.compile(optimizer='adam',
                   loss='sparse_categorical_crossentropy',
-                  metrics=['accuracy'])
+                  metrics=['accuracy'],
+                  steps_per_execution=steps_per_execution)
     
     print(f"Model architecture:")
     model.summary()
@@ -334,10 +447,10 @@ def train_model(train_data, model_name="dl_model"):
     # Train model
     history = model.fit(
         X_train_scaled, y_train,
-        validation_split=0.2,
         epochs=25,
         batch_size=32,
-        verbose=1
+        verbose=verbose,
+        **validation_options
     )
     
     return model, scaler, label_encoder, history
@@ -345,9 +458,7 @@ def train_model(train_data, model_name="dl_model"):
 def evaluate_model(model, scaler, label_encoder, test_data, test_case_name):
     """Evaluate model on test data and generate outputs"""
     # Extract features
-    feature_columns = ['FST', 'DDAF', 'iHS', 'nSL', 'XP-EHH',
-                      'Theta_Pi', 'Theta_W', 'Tajima_D', 'Garud_H', 
-                      'Fay_Wu_H', 'Zeng_E', 'PBS', 'NSS']
+    feature_columns = FEATURES
     
     # Handle missing values
     test_data_clean = test_data.dropna(subset=feature_columns)
@@ -408,6 +519,50 @@ def evaluate_model(model, scaler, label_encoder, test_data, test_case_name):
     print(f"Saved prediction results to {output_file}")
     
     return test_data_clean, cm, report_df
+
+def metrics(test, mode):
+    cohorts = [("Pooled test", test)]
+    if "scenario" in test:
+        cohorts.extend(test.groupby("scenario", sort=True))
+    for scenario, cohort in cohorts:
+        matrix = confusion_matrix(cohort["label"], cohort["predicted_label"], labels=CLASSES)
+        for label in ("neutral", "linked", "sweep"):
+            idx = CLASSES.index(label)
+            tp = matrix[idx, idx]
+            fp = matrix[:, idx].sum() - tp
+            fn = matrix[idx, :].sum() - tp
+            yield {
+                "Scenario": scenario, "Level": "Site",
+                "Tool": "MLP with downsampling" if mode == "downsample" else "MLP without downsampling",
+                "Class": label.title(), "TP": tp, "FP": fp, "FN": fn,
+                "Precision": tp / (tp + fp) if tp + fp else 0.0,
+                "Recall": tp / (tp + fn) if tp + fn else 0.0,
+                "F1": 2 * tp / (2 * tp + fp + fn) if 2 * tp + fp + fn else 0.0,
+            }
+
+
+def evaluate_export_model(model, scaler, label_encoder, test_data, mode, scenarios, output):
+    """Evaluate the MLP on the pooled export and any supplied test scenarios."""
+    X_test_scaled = scaler.transform(test_data[FEATURES]).astype(np.float32)
+    probabilities = model.predict(X_test_scaled, batch_size=4096, verbose=0)
+    if not np.isfinite(probabilities).all():
+        raise ValueError(f"Nonfinite probabilities in {mode} run")
+
+    predictions = test_data[['block', 'position', 'window_start', 'label']].copy()
+    if scenarios is not None:
+        predictions['scenario'] = predictions['block'].map(scenarios)
+    predictions['predicted_label'] = label_encoder.inverse_transform(probabilities.argmax(axis=1))
+    for idx, label in enumerate(label_encoder.classes_):
+        predictions[f'prob_{label}'] = probabilities[:, idx]
+
+    results = pd.DataFrame(metrics(predictions, mode))
+    print(results.to_string(index=False), flush=True)
+    results.to_csv(output / f'metrics_{mode}.csv', index=False)
+    predictions.to_csv(
+        output / f'predictions_{mode}.csv.gz', index=False,
+        compression={'method': 'gzip', 'compresslevel': 1},
+    )
+
 
 def main():
     """Main pipeline execution"""
@@ -481,5 +636,53 @@ def main():
     print("\nPipeline completed successfully!")
     return model, scaler, label_encoder, history
 
+def run_export_pipeline(args):
+    """Train and evaluate on the pooled class-split exports."""
+    tf.config.threading.set_inter_op_parallelism_threads(2)
+    tf.config.threading.set_intra_op_parallelism_threads(2)
+    train, n_train = load_export_data(args.data, "train")
+    test, n_test = load_export_data(args.data, "test")
+    scenarios = load_scenarios(args.test_scenarios, n_test)
+    fit_blocks, validation_blocks = train_test_split(
+        np.arange(1, n_train + 1), test_size=0.2, random_state=args.seed
+    )
+    is_fit = train["block"].isin(fit_blocks)
+    fit, validation = train.loc[is_fit], train.loc[~is_fit]
+    if set(fit["label"]) != set(CLASSES) or set(test["label"]) != set(CLASSES):
+        raise ValueError("Expected all three classes in fitting and test data")
+    print(f"Fit blocks: {len(fit_blocks)}. Validation blocks: {len(validation_blocks)}.", flush=True)
+    print(f"Validation rows: {validation['label'].value_counts().to_dict()}", flush=True)
+
+    args.output.mkdir(parents=True, exist_ok=True)
+    modes = ["downsample", "none"] if args.sampling == "both" else [args.sampling]
+    for mode in modes:
+        tf.keras.backend.clear_session()
+        tf.keras.utils.set_random_seed(args.seed)
+        train_data = balance_training_data_downsample(fit, seed=args.seed) if mode == 'downsample' else fit
+        print(f"{mode} fitting rows: {train_data['label'].value_counts().to_dict()}", flush=True)
+        model, scaler, label_encoder, history = train_model(train_data, validation_data=validation)
+        history_table = pd.DataFrame(history.history)
+        history_table.index = pd.RangeIndex(1, len(history_table) + 1, name='epoch')
+        history_table.to_csv(args.output / f'history_{mode}.csv')
+        evaluate_export_model(model, scaler, label_encoder, test, mode, scenarios, args.output)
+
+
 if __name__ == "__main__":
-    model, scaler, label_encoder, history = main()
+    parser = argparse.ArgumentParser(description="MLP for positive selection scanning classification")
+    parser.add_argument('data', nargs='?', type=Path, help='Directory containing the site/ and window/ exports')
+    parser.add_argument('--output', type=Path, help='Directory for tables and predictions')
+    parser.add_argument('--sampling', choices=['both', 'downsample', 'none'])
+    parser.add_argument('--seed', type=int)
+    parser.add_argument('--test-scenarios', type=Path, help='Optional CSV with columns block,scenario')
+    args = parser.parse_args()
+
+    if args.data is None:
+        if any(value is not None for value in (args.output, args.sampling, args.seed, args.test_scenarios)):
+            parser.error("Supply the pooled data directory when using export options")
+        main()
+    else:
+        if args.output is None:
+            parser.error("--output is required with pooled data")
+        args.sampling = args.sampling or 'both'
+        args.seed = 42 if args.seed is None else args.seed
+        run_export_pipeline(args)

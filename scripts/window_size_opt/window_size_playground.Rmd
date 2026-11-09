@@ -1,0 +1,43 @@
+---
+title: "win_size_opt"
+output: html_document
+date: "2026-07-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+
+# control all graphs here! std stat choices: theta_pi, theta_w, tajimas_d, fay_wus_h, zengs_e, pbs, nss
+statistic <<- "pbs"
+```
+
+```{r}
+paths <- c("1.6kb" = "check_1.6kb.txt",
+           "8kb"   = "check_8kb.txt",
+           "40kb"  = "check_40kb.txt",
+           "200kb" = "check_200kb.txt")
+
+widths <- c("1.6kb" = 1600, "8kb" = 8000, "40kb" = 40000, "200kb" = 200000)
+fracs  <- c("1.6kb" = 0.2, "8kb" = 1, "40kb" = 1, "200kb" = 1)
+
+winstats <- imap_dfr(paths, function(p, sz) {
+  read_delim(p, col_types = cols(.default = col_double())) %>%
+    filter(win_start != "win_start") %>%
+    filter(.data[[statistic]] != -998, !is.na(.data[[statistic]])) %>%
+    sample_frac(fracs[[sz]]) %>%
+    mutate(size = sz, w = widths[[sz]] * 0.8)
+}) %>%
+  mutate(size = factor(size, levels = names(paths)),
+         win_start = as.numeric(win_start))
+
+ggplot(winstats, aes(win_start, .data[[statistic]], group = win_start)) +
+  geom_boxplot(aes(width = w), outlier.size = 0.3) +
+  facet_wrap(~ size, ncol = 1, scales = "free_y") +
+  theme_light() +
+  labs(title = paste(statistic, "across window sizes"),
+       x = "window start", y = paste(statistic, "value"))
+
+# ggsave("window_size_opt_pbs.png", width = 15, height = 10, dpi = 300, units = "in")
+```
+

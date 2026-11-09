@@ -85,20 +85,34 @@ class SFS_statistics:
 		'''
 		return self.thetaL()-self.thetaW()
 	
-def scikitallel(pos, h1, ac1, ac2, ac3, size, start, end): 
+def scikitallel(pos, h1, ac1, ac2, ac3, size, start, end, step): 
 	
-	# windowed nucleotide diversity 
-	dxy, _, _, _ = allel.windowed_divergence(pos, ac1, ac2, size=size, start=start, stop=end)
+	if step is None: 
+		# windowed nucleotide diversity 
+		pi, _, _, _ = allel.windowed_diversity(pos, ac1, size=size, start=start, stop=end)
 
-	# windowed watterson theta 
-	w, _, _, _ = allel.windowed_watterson_theta(pos, ac1, size=size, start=start, stop=end)
+		# windowed watterson theta 
+		w, _, _, _ = allel.windowed_watterson_theta(pos, ac1, size=size, start=start, stop=end)
 
-	# tajima's d
-	d, _, _ = allel.windowed_tajima_d(pos, ac1, size=size, start=start, stop=end)
+		# tajima's d
+		d, _, _ = allel.windowed_tajima_d(pos, ac1, size=size, start=start, stop=end)
 
-	return dxy, w, d
+		return pi, w, d
+	
+	else: 
+		# windowed nucleotide diversity 
+		pi, _, _, _ = allel.windowed_diversity(pos, ac1, size=size, start=start, stop=end, step=step)
 
-def allstatsline(posfilename,start,end,numindividuals=100):
+		# windowed watterson theta 
+		w, _, _, _ = allel.windowed_watterson_theta(pos, ac1, size=size, start=start, stop=end, step=step)
+
+		# tajima's d
+		d, _, _ = allel.windowed_tajima_d(pos, ac1, size=size, start=start, stop=end, step=step)
+
+		return pi, w, d
+		
+
+def allstatsline(posfilename, start, end, numindividuals = 200):
 
 	'''
 	:param posfilename: .pos file
@@ -138,14 +152,13 @@ def fst_for_pbs(ac1, ac2):
 # from dave peede.
 def calc_pbs_per_region(g1, g2, g3): ### remove window stuff in here
 
-	# determine if any of the sites in targetpop file are segregating
-	g1_segregating = (not any(g1.count_alleles().is_segregating()) == True)
-	g2_segregating = (not any(g2.count_alleles().is_segregating()) == True)
-	g3_segregating = (not any(g3.count_alleles().is_segregating()) == True)
-	
-	# if no sites are segregating
-	if g1_segregating == True | g2_segregating == True | g3_segregating == True:
-		# return undefinded
+	# determine if any sites are segregating in each population
+	g1_has_seg = g1.count_alleles().is_segregating().any()
+	g2_has_seg = g2.count_alleles().is_segregating().any()
+	g3_has_seg = g3.count_alleles().is_segregating().any()
+
+	# if any population has no segregating sites, PBS is undefined
+	if not (g1_has_seg and g2_has_seg and g3_has_seg):
 		return np.nan
 	
 	# else there are segregating sites
@@ -197,11 +210,16 @@ if __name__ == '__main__':
 	filename = sys.argv[4]
 	output_path = sys.argv[5]
 
-	h1 = allel.HaplotypeArray(targetpop['calldata/GT'][:, :, 0])
-	h2 = allel.HaplotypeArray(refpop['calldata/GT'][:, :, 0])
-	h3 = allel.HaplotypeArray(altpop['calldata/GT'][:, :, 0])
-	pos = targetpop['variants/POS']
+	gt1 = targetpop['calldata/GT']
+	h1 = allel.HaplotypeArray(gt1.reshape(gt1.shape[0], -1))
+	gt2 = refpop['calldata/GT']
+	h2 = allel.HaplotypeArray(gt2.reshape(gt2.shape[0], -1))
+	gt3 = altpop['calldata/GT']
+	h3 = allel.HaplotypeArray(gt3.reshape(gt3.shape[0], -1))
+
+	pos = targetpop['variants/POS'].astype(np.int64)
 	pos_idx = allel.SortedIndex(pos)
+	
 	ac1 = h1.count_alleles()
 	ac2 = h2.count_alleles()
 	ac3 = h3.count_alleles()
@@ -209,11 +227,21 @@ if __name__ == '__main__':
 	windowsize = int(sys.argv[6])
 	start = 1
 	end = int(sys.argv[7])
-	numwindows = int(math.ceil(end/windowsize))
-	start_ends = []
 
+	numwindows = int(math.ceil(end / windowsize))
+
+	start_ends = []
 	for i in range(numwindows):
-		start_ends.append([i*windowsize,(i+1)*windowsize])
+		win_start = start + i * windowsize
+		win_end = win_start + windowsize - 1 
+		start_ends.append([win_start, win_end])
+
+	# # sliding window code
+	# sliding = False  # true for sliding windows
+	# step = 100 if sliding else windowsize
+	# if sliding:
+	# 	# only full windows
+	# 	numwindows = int(math.floor((end - windowsize) / step)) + 1
 
 	### get fwh, ze, pbs, garud's h, nss per win
 	fwh_list = []
@@ -256,15 +284,26 @@ if __name__ == '__main__':
 	pbs_final = np.array(pbs_list)
 	nss_final = np.array(nss_list)
 
-	### get dxy, w, d, pbs, garud's h, seg sites per win
-	dxy, w, d = scikitallel(pos, h1, ac1, ac2, ac3, windowsize, start, end)
+	### get pi, w, d, pbs, garud's h, seg sites per win
+	pi, w, d = scikitallel(pos, h1, ac1, ac2, ac3, windowsize, start, end, step = None)
 
+	def clean(x):
+		return np.nan_to_num(np.asarray(x, dtype = float), nan = -998.0, posinf = -998.0, neginf = -998.0)
+
+	pi, w, d = clean(pi), clean(w), clean(d)
+	fwh_final = clean(fwh_final)
+	ze_final = clean(ze_final)
+	garuds_final = clean(garuds_final)
+	pbs_final = clean(pbs_final)
+	nss_final = clean(nss_final)
+
+	#print("outputting file...")
 	output = open(output_path, 'w')
 	output.write("win_start\ttheta_pi\ttheta_w\ttajimas_d\tfay_wus_h\tzengs_e\tgaruds_h\tpbs\tnss\n")
-	seq = range(1, end, windowsize)
+	seq = range(start, end - windowsize + 2, windowsize)
 	for i in range(len(seq)): 
-		output.write('\t'.join([str(seq[i]),str(dxy[i]),str(w[i]),str(d[i]),str(fwh_final[i]),str(ze_final[i]),str(garuds_final[i]),str(pbs_final[i]),str(nss_final[i])]) + ("\n"))
-
+		output.write('\t'.join([str(seq[i]),str(pi[i]),str(w[i]),str(d[i]),str(fwh_final[i]),str(ze_final[i]),str(garuds_final[i]),str(pbs_final[i]),str(nss_final[i])]) + ("\n"))
+	output.close()
 
 
 

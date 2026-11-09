@@ -5,7 +5,7 @@
 # #SBATCH -J run_windex 	   
 # #SBATCH -N 1 						
 # #SBATCH -n 1                        
-# #SBATCH -t 2-00:00 			        	
+# #SBATCH -t 1-00:00 			        	
 # #SBATCH --mem 10G 				    
 
 << read_me
@@ -26,7 +26,6 @@ source ~/venv/windex_env/bin/activate
 # use hierarchical_hmm.py -h
 
 # run WINDEX
-
 for i in {81..100}; do # run WINDEX on all testing files (sims 1-80 were used for training!)
 
     python scripts/hierarchical_hmm.py \

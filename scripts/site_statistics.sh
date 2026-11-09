@@ -1,107 +1,137 @@
 #!/bin/bash
 
-#SBATCH -J 1kgp_site_stats     	    
+#SBATCH -J site_statistics	    
+#SBATCH -p gpu --gres=gpu:1         
 #SBATCH -N 1 						
-#SBATCH -n 1                        
-#SBATCH -t 2-00:00 			        
-#SBATCH --mem 25G 				    
+#SBATCH -n 1                       
+#SBATCH -t 2-00:00 			       
+#SBATCH --mem 5G 				    
 
-module load python 
+module load python
 source ~/.venv/windex_env/bin/activate
 
-for i in {1..22}; do
+### for 1000 Genomes Data 
 
-    for j in "yri" "ceu" "chb"; do
-    echo $i, $j
+pol_dir=polarity_files
 
-    chrom=chr$i
-    focal_pop=$j
+for pop in 'YRI' 'CEU' 'CHB'; do
+    for chrom in (1..22); do
 
-    file_path=/path/to/vcfs
-    pop_path=/path/to/population/definitions
-    out_path=/output/path
+        echo -e "array task id: $chrom || params = pop: $pop"
 
-#################### generate single-population VCF files ######################
+        vcf_file="threepops_chr${chrom}.recode.vcf"
 
-# cat $file_path/ceu_yri_fin_chb_stu_${chrom}.vcf.gz | vcftools --gzvcf - --recode --recode-INFO-all --keep $pop_path/threepops_samples.txt --out $file_path/threepops_${chrom}
-# cat $file_path/threepops_${chrom}.recode.vcf | bcftools view -i 'INFO/AC>0 & INFO/AC<INFO/AN' - | vcftools --vcf - --maf 0.05 --min-alleles 2 --max-alleles 2 --remove-indels --recode --recode-INFO-all --out $file_path/threepops_${chrom}_filtered
- 
-    for pop in "yri" "ceu" "chb"; do
+        # set pops and refs for stat calculations
+        if [ $pop == "YRI" ]; then 
+            focal_pop="YRI"
+            ref_pop="CEU"
+            alt_pop="CHB"
+        elif [ $pop == "CEU" ]; then
+            focal_pop="CEU"
+            ref_pop="CHB"
+            alt_pop="YRI"
+        elif [ $pop == "CHB" ]; then
+            focal_pop="CHB"
+            ref_pop="YRI"
+            alt_pop="CEU"
+        fi
 
-        # split into single pop files
-        cat $file_path/threepops_${chrom}_filtered.recode.vcf | vcftools --vcf - --recode --recode-INFO-all --keep $pop_path/${pop}_samples.txt --out $out_path/${pop}_filtered_${chrom}
+        # perform stat calculations
+        module load bcftools
 
-        # make mapfiles from single-pop vcfs
-        grep -v '#' $out_path/${pop}_filtered_${chrom}.recode.vcf | awk '{print $1"\t"$3"\t"$2"\t"$2 }' > $out_path/${pop}_filtered_${chrom}.map; done
+        # filter for biallelic sites and MAF >= 0.01 
+        if [[ ! -s ${vcf_file}.filtered ]]; then
+            bcftools norm -m- ${vcf_file} -Ov | \
+            bcftools +fill-tags -- -t AC,AN | \
+            bcftools view -i 'AC/AN>=0.01' -Ov -o ${vcf_file}.filtered
 
-    #################### calculate individual statistics ###########################
+            bcftools +fill-tags ${vcf_file} -Ou -- -t AC,AN | bcftools view -m2 -M2 -e 'AC==0 || AC==AN' -Ou | bcftools annotate -x INFO -Oz -o ${base}.filtered.vcf.gz
+
+        fi
+
+        # per-site ancestral allele polarity (assisted w Claude Opus v5)
+        if [[ ! -s ${pol_dir}/chr${chrom}.alt_is_derived ]]; then
+            bcftools query -f '%POS\t%REF\t%ALT\t%INFO/AA\n' ${vcf_file}.filtered \
+              | awk -F'\t' -v c=$chrom 'BEGIN{OFS="\t"}
+                  {aa = toupper(substr($4,1,1))
+                   if      (aa == toupper($2)) { d = 1;  r++ }
+                   else if (aa == toupper($3)) { d = 0;  a++ }
+                   else                        { d = -1; u++ }
+                   if (!($1 in seen)) { seen[$1]; print $1, d }}
+                  END {printf("chr%-3s REF_anc=%-9d ALT_anc=%-8d unknown=%-8d frac_flipped=%.4f frac_unknown=%.4f\n",
+                              c, r, a, u, a/(r+a+u), u/(r+a+u)) > "/dev/stderr"}' \
+              > ${pol_dir}/chr${chrom}.alt_is_derived 2>> ${pol_dir}/summary.txt
+        fi
+
+        module unload bcftools
+
+        source ~/venv/windex_env/bin/activate
+        module load vcftools
+
+        # calculate 
+        ~/venv/windex_env/bin/python site_helper.py ${vcf_file}.filtered $focal_pop $ref_pop $alt_pop 1kgp_${pop}_${chrom}.site_stats ${pol_dir}/chr${chrom}.alt_is_derived
+        
+        # cleanup
+        # rm ${vcf_file}.filtered
+        # rm ${vcf_file}.filtered.dedup
+        # rm ${vcf_file}.filtered.maf
+
+    done
+done
+
+
+# ------------------ running selscan to obtain XP-EHH (need to run on CPUs) ------------------------- #
+
+module load bcftools
+
+focal_pop='YRI'
+
+for i in (1..22); do 
+    
+    vcf_file="threepops_chr${i}.recode.vcf"
+
+    if [[ ! -f "${vcf_file}.filtered" ]]; then
+
+        # perform stat calculations
+        # filter for biallelic sites and MAF >= 0.01 
+        bcftools norm -m- ${vcf_file} -Ov | \
+        bcftools +fill-tags -- -t AC,AN | \
+        bcftools view -i 'AC/AN>=0.01' -Ov -o ${vcf_file}.filtered 
+
+    fi
+
+    # filter biallelic SNPs, polymorphic in the pooled sample
+    bcftools +fill-tags ${vcf_file} -Ou -- -t AC,AN | bcftools view -m2 -M2 -e 'AC==0 || AC==AN' -Ou | bcftools annotate -x INFO -Oz -o ${base}.filtered.vcf.gz
+    bcftools index ${base}.filtered.vcf.gz
+
+    # split by population (same sites in every file)
+    for pop in 'YRI' 'CEU' 'CHB'; do
+        bcftools view -S pops_1kgp.${pop} ${base}.filtered.vcf.gz -Ov -o ${base}_${pop}.filtered.vcf
+    done
+
+    # one map file for all three (identical loci)
+    bcftools view -H ${base}.filtered.vcf.gz | awk '{print $1"\t"$1"_"$2"\t"$2"\t"$2}' > ${base}.map
 
     # XP-EHH 
     echo 'XP-EHH'
 
-    for pop in "yri" "ceu" "chb"; do
+    for pop in 'YRI' 'CEU' 'CHB'; do
 
         if [ $pop == $focal_pop ]; then 
             continue 
         else
-            
-            if [[ $focal_pop == "yri" && $pop == "ceu" ]]; then
-            # run xpehh 
-            /users/hsnell/data_sramacha/hsnell/swifr/programs/selscan/bin/linux/./selscan --xpehh --vcf $out_path/${focal_pop}_filtered_${chrom}.recode.vcf --vcf-ref $out_path/${pop}_filtered_${chrom}.recode.vcf --map $out_path/${focal_pop}_filtered_${chrom}.map --maf 0.001 --threads 12 --trunc-ok --keep-low-freq --wagh --out $out_path/${focal_pop}_filtered_${chrom}
+            if [[ $focal_pop == "YRI" && $pop == "CEU" ]]; then
+                # run xpehh 
+                ./selscan --xpehh --vcf ${base}_${focal_pop}.filtered.vcf --vcf-ref ${base}_${pop}.filtered.vcf --map ${base}.map --maf 0.001 --threads 4 --trunc-ok --keep-low-freq --wagh --out ${base}_${focal_pop}
 
-            elif [[ $focal_pop == "ceu" && $pop == "chb" ]]; then
-            # run xpehh 
-            /users/hsnell/data_sramacha/hsnell/swifr/programs/selscan/bin/linux/./selscan --xpehh --vcf $out_path/${focal_pop}_filtered_${chrom}.recode.vcf --vcf-ref $out_path/${pop}_filtered_${chrom}.recode.vcf --map $out_path/${focal_pop}_filtered_${chrom}.map --maf 0.001 --threads 12 --trunc-ok --keep-low-freq --wagh --out $out_path/${focal_pop}_filtered_${chrom}
+            elif [[ $focal_pop == "CEU" && $pop == "CHB" ]]; then
+                ./selscan --xpehh --vcf ${base}_${focal_pop}.filtered.vcf --vcf-ref ${base}_${pop}.filtered.vcf --map ${base}.map --maf 0.001 --threads 4 --trunc-ok --keep-low-freq --wagh --out ${base}_${focal_pop}
 
-            elif [[ $focal_pop == "chb" && $pop == "yri" ]]; then
-            # run xpehh 
-            /users/hsnell/data_sramacha/hsnell/swifr/programs/selscan/bin/linux/./selscan --xpehh --vcf $out_path/${focal_pop}_filtered_${chrom}.recode.vcf --vcf-ref $out_path/${pop}_filtered_${chrom}.recode.vcf --map $out_path/${focal_pop}_filtered_${chrom}.map --maf 0.001 --threads 12 --trunc-ok --keep-low-freq --wagh --out $out_path/${focal_pop}_filtered_${chrom}
+            elif [[ $focal_pop == "CHB" && $pop == "YRI" ]]; then
+                ./selscan --xpehh --vcf ${base}_${focal_pop}.filtered.vcf --vcf-ref ${base}_${pop}.filtered.vcf --map ${base}.map --maf 0.001 --threads 4 --trunc-ok --keep-low-freq --wagh --out ${base}_${focal_pop}
 
-            fi; 
-        fi; 
-    done
-
-    # DDAF 
-    echo 'DDAF'
-
-    for pop in "yri" "ceu" "chb"; do
-
-        # get derived allele frequencies for each population
-        cat $out_path/${pop}_filtered_${chrom}.recode.vcf | awk -F'\t' 'BEGIN{print "CHROM\tPOS\tREF\tALT\tAA\tDERIVED_COUNT\tTOTAL_ALLELES\tDAF"} !/^#/ {ref=$4; alt=$5; if (match($8,/AA=([A-Za-z]+)/,a)) {aa=toupper(a[1]); total=0; derived=0; for(i=10;i<=NF;i++){if($i~/\.\/\./)continue; split($i,g,/[:\/|]/); for(j=1;j<=2;j++){if(g[j]~/[01]/){total++; if(aa==ref && g[j]==1)derived++; else if(aa==alt && g[j]==0)derived++;}}} if(total>0) daf=derived/total; else daf="NA"; print $1,$2,ref,alt,aa,derived,total,daf}}' OFS="\t" > $out_path/${pop}_filtered_${chrom}.frq_derived 
-        cat $out_path/${pop}_filtered_${chrom}.frq_derived | awk '$5 != N {print}' | awk '{print $8}' | tail -n+2 > $out_path/${pop}_filtered_${chrom}.DAF; done
-
-    cat $out_path/${focal_pop}_filtered_${chrom}.frq_derived | awk '$5 != N {print}' | awk '{print $2}' > $out_path/${focal_pop}_filtered_${chrom}.DAF.pos
-    paste $out_path/${focal_pop}_filtered_${chrom}.DAF $out_path/yri_filtered_${chrom}.DAF $out_path/ceu_filtered_${chrom}.DAF | awk 'BEGIN { OFS = "\t" } {print ($1-(($2+$3)/2))}' | sed '1s/^/DDAF\n/' | paste $out_path/${focal_pop}_filtered_${chrom}.DAF.pos - > $out_path/${focal_pop}_filtered_${chrom}.DDAF.out
-
-    # nSL
-    echo 'nSL'
-
-    /users/hsnell/data_sramacha/hsnell/swifr/programs/selscan/bin/linux/./selscan --nsl --vcf $out_path/${focal_pop}_filtered_${chrom}.recode.vcf --map  $out_path/${focal_pop}_filtered_${chrom}.map --maf 0.001 --threads 12 --trunc-ok --keep-low-freq --out $out_path/${focal_pop}_filtered_${chrom} 
-
-    # iHS 
-    echo 'iHS' 
-
-    /users/hsnell/data_sramacha/hsnell/swifr/programs/selscan/bin/linux/./selscan --ihs --vcf $out_path/${focal_pop}_filtered_${chrom}.recode.vcf --map  $out_path/${focal_pop}_filtered_${chrom}.map --maf 0.001 --threads 12 --trunc-ok --max-extend -1 --out $out_path/${focal_pop}_filtered_${chrom}
-
-
-    # Fst
-    echo 'Fst'
-
-    for pop in "yri" "ceu" "chb"; do
-
-        grep "^#CHROM" $out_path/${pop}_filtered_${chrom}.recode.vcf | sed 's/\t/\n/g' | tail -n+10 > $out_path/${pop}_filtered_${chrom}.txt; done
-
-    if [ $pop == "yri" ]; then
-        vcftools --vcf $file_path/threepops_${chrom}_filtered.recode.vcf --weir-fst-pop $out_path/${focal_pop}_filtered_${chrom}.txt --weir-fst-pop $out_path/ceu_filtered_${chrom}.txt --weir-fst-pop $out_path/chb_filtered_${chrom}.txt --stdout | cut -f2,3 | sed "s/POS/SNP_name/g" | sed "s/WEIR_AND_COCKERHAM_FST/FST/g" > $out_path/${focal_pop}_filtered_${chrom}.fst.out
-
-    elif [ $pop == "ceu" ]; then
-        vcftools --vcf $file_path/threepops_${chrom}_filtered.recode.vcf --weir-fst-pop $out_path/${focal_pop}_filtered_${chrom}.txt --weir-fst-pop $out_path/chb_filtered_${chrom}.txt --weir-fst-pop $out_path/yri_filtered_${chrom}.txt --stdout | cut -f2,3 | sed "s/POS/SNP_name/g" | sed "s/WEIR_AND_COCKERHAM_FST/FST/g" > $out_path/${focal_pop}_filtered_${chrom}.fst.out
-
-    elif [ $pop == "chb" ]; then
-        vcftools --vcf $file_path/threepops_${chrom}_filtered.recode.vcf --weir-fst-pop $out_path/${focal_pop}_filtered_${chrom}.txt --weir-fst-pop $out_path/yri_filtered_${chrom}.txt --weir-fst-pop $out_path/ceu_filtered_${chrom}.txt --stdout | cut -f2,3 | sed "s/POS/SNP_name/g" | sed "s/WEIR_AND_COCKERHAM_FST/FST/g" > $out_path/${focal_pop}_filtered_${chrom}.fst.out
-
-    fi; 
+            fi
+        fi
 
     done
-
 done
